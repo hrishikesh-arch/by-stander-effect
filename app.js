@@ -1,0 +1,969 @@
+const STORAGE_KEY = "digital_bystander_experiment_v2";
+const ADMIN_PASSCODE = "ADMIN2026";
+const HELP_OFFSET_MS = 45000;
+const TIMEOUT_MS = 180000;
+const HELP_CUE = "Hey guys, real quick-does anyone remember that guest code from the setup guide? My phone just disconnected.";
+
+const app = document.getElementById("app");
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAqhHJGJyykiKSU-IgIa321Rm0zN97d9rE",
+  authDomain: "psychology-5d4e1.firebaseapp.com",
+  databaseURL: "https://psychology-5d4e1-default-rtdb.firebaseio.com",
+  projectId: "psychology-5d4e1",
+  storageBucket: "psychology-5d4e1.firebasestorage.app",
+  messagingSenderId: "883810074062",
+  appId: "1:883810074062:web:6d691817fa94cb94beff9f",
+  measurementId: "G-MHTHP5PE9W"
+};
+if (typeof firebase !== 'undefined') {
+  try {
+    firebase.initializeApp(firebaseConfig);
+    if (typeof firebase.database === 'function') {
+      firebase.database().ref('groups').on('value', (snapshot) => {
+        const data = snapshot.val() || {};
+        const fbGroups = Object.values(data);
+        try {
+          const fallback = { groups: [], sessions: [], events: [] };
+          const state = JSON.parse(localStorage.getItem(STORAGE_KEY)) || fallback;
+          let changed = false;
+          fbGroups.forEach(fg => {
+            if (!state.groups.some(lg => lg.id === fg.id)) {
+              state.groups.push(fg);
+              changed = true;
+            }
+          });
+          if (changed) localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        } catch (e) {}
+      });
+    }
+  } catch (e) {
+    console.warn("Firebase init failed:", e);
+  }
+}
+
+let timers = [];
+let countdownTimer = null;
+let replyingTo = null;
+
+const bots = [
+  { name: "Dr. Maya", role: "creator", color: "#0f766e" },
+  { name: "Aarav", role: "member", color: "#2563eb" },
+  { name: "Nisha", role: "member", color: "#7c3aed" },
+  { name: "Kabir", role: "member", color: "#ca8a04" },
+  { name: "Meera", role: "member", color: "#db2777" },
+  { name: "Dev", role: "member", color: "#ea580c" },
+  { name: "Ananya", role: "member", color: "#0891b2" },
+  { name: "Rohan", role: "member", color: "#16a34a" },
+  { name: "Ishita", role: "member", color: "#9333ea" },
+  { name: "Arjun", role: "member", color: "#0369a1" },
+  { name: "Tara", role: "member", color: "#be123c" }
+];
+
+const botScripts = [
+  [
+    [2500, "Dr. Maya", "Hey all."],
+    [6500, "Aarav", "hi"],
+    [11000, "Nisha", "I joined"],
+    [17000, "Kabir", "same here"],
+    [23500, "Meera", "wait what page are we on?"],
+    [31000, "Dev", "the guide page"],
+    [38500, "Ananya", "{{name}}, can you see it?"]
+  ],
+  [
+    [2500, "Dr. Maya", "Everyone in?"],
+    [7500, "Rohan", "yes"],
+    [13000, "Ishita", "yep"],
+    [20500, "Arjun", "mine loaded now"],
+    [28500, "Tara", "where is the setup thing?"],
+    [36500, "Aarav", "{{name}}, did yours load?"]
+  ],
+  [
+    [3000, "Dr. Maya", "Okay let's start."],
+    [8500, "Meera", "one sec"],
+    [14500, "Dev", "ready"],
+    [21500, "Nisha", "back"],
+    [30000, "Kabir", "there was a code right?"],
+    [38000, "Ishita", "{{name}}, are you here?"]
+  ]
+];
+
+const postHelpScript = [
+  [62000, "Rohan", "checking"],
+  [82000, "Tara", "maybe top page?"],
+  [109000, "Arjun", "not sure"],
+  [139000, "Nisha", "anyone?"]
+];
+
+function loadState() {
+  const fallback = { groups: [], sessions: [], events: [] };
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveState(state) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    if (typeof firebase !== 'undefined' && typeof firebase.database === 'function') {
+      const db = firebase.database();
+      state.sessions.forEach(session => {
+        db.ref('sessions/' + session.id).set(session).catch(e => console.warn("FB Session error", e));
+      });
+      state.groups.forEach(group => {
+        db.ref('groups/' + group.id).set(group).catch(e => console.warn("FB Group error", e));
+      });
+    }
+  } catch (e) {
+    console.warn("Firebase sync failed:", e);
+  }
+}
+
+function createId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function makeGroup(code, readReceipts, bystanderCount = 10, memberCount = 12) {
+  return {
+    id: createId("grp"),
+    code,
+    name: "Group 4",
+    creator: "Dr. Maya",
+    memberCount,
+    bystanderCount,
+    readReceipts,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function ensureDefaultGroups(state) {
+  if (state.groups.length) return state;
+  state.groups = [makeGroup("GROUP4-CUE", true), makeGroup("GROUP4-NOCUE", false)];
+  saveState(state);
+  return state;
+}
+
+function clearTimers() {
+  timers.forEach(clearTimeout);
+  timers = [];
+  if (countdownTimer) clearInterval(countdownTimer);
+  countdownTimer = null;
+}
+
+function renderFrame(content, wide = false) {
+  app.innerHTML = `
+    <div class="${wide ? "app-frame wide" : "app-frame"}">
+      <header class="site-bar">
+        <div class="site-brand">
+          <div class="site-mark">G4</div>
+          <div>
+            <h1>Group Chat Study</h1>
+            <p>Digital bystander effect research prototype</p>
+          </div>
+        </div>
+        <nav>
+          <button class="ghost-btn" data-view="participant">Participant</button>
+          <button class="ghost-btn" data-view="admin">Admin</button>
+        </nav>
+      </header>
+      ${content}
+    </div>
+  `;
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      clearTimers();
+      if (button.dataset.view === "admin") renderAdminLogin();
+      else renderOnboarding();
+    });
+  });
+}
+
+function renderOnboarding(error = "") {
+  clearTimers();
+  renderFrame(`
+    <section class="entry-grid">
+      <div class="entry-copy">
+        <div class="phone-preview">
+          <div class="preview-top"></div>
+          <div class="preview-bubble incoming">Can everyone see the setup guide?</div>
+          <div class="preview-bubble outgoing">Yes, I joined.</div>
+          <div class="preview-bubble incoming">Please keep the group open.</div>
+        </div>
+        <h2>Join the study group chat</h2>
+        <p>This prototype simulates a group chat for a controlled psychology experiment. The live-looking members are scripted study accounts, and the final version should include faculty-approved consent and debrief text.</p>
+      </div>
+      <form class="entry-card" id="profileForm">
+        <h2>Participant Details</h2>
+        <label><span>Name</span><input id="participantName" autocomplete="name" required></label>
+        <label><span>Phone number</span><input id="participantPhone" inputmode="tel" autocomplete="tel" required></label>
+        <label><span>Email address</span><input id="participantEmail" type="email" autocomplete="email" required></label>
+        <label><span>Profile photo optional</span><input id="participantPhoto" type="file" accept="image/*"></label>
+        ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+        <button class="primary-btn" type="submit">Continue</button>
+      </form>
+    </section>
+  `);
+
+  document.getElementById("profileForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const participant = {
+      name: document.getElementById("participantName").value.trim(),
+      phone: document.getElementById("participantPhone").value.trim(),
+      email: document.getElementById("participantEmail").value.trim(),
+      photo: await readPhoto(document.getElementById("participantPhoto").files[0])
+    };
+    if (!participant.name || !participant.phone || !participant.email) {
+      renderOnboarding("Please enter your name, phone number, and email.");
+      return;
+    }
+    renderJoinGate(participant);
+  });
+}
+
+function readPhoto(file) {
+  return new Promise((resolve) => {
+    if (!file) {
+      resolve("");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => resolve("");
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderJoinGate(participant, error = "") {
+  const state = ensureDefaultGroups(loadState());
+  const groupOptions = state.groups
+    .map((group) => `<option value="${escapeHtml(group.code)}">${escapeHtml(group.code)}</option>`)
+    .join("");
+
+  renderFrame(`
+    <section class="join-card">
+      <div class="group-invite">
+        ${avatarMarkup("Group 4", "", "group-avatar")}
+        <h2>Group 4</h2>
+        <p>${state.groups[0]?.memberCount || 12} members</p>
+        <p class="invite-text">You have been invited to join this online group chat task.</p>
+      </div>
+      <form class="join-form" id="joinForm">
+        <label>
+          <span>Group code from creator</span>
+          <select id="groupCode">
+            <option value="__random__">Use assigned Group 4 code</option>
+            ${groupOptions}
+          </select>
+        </label>
+        ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+        <div class="action-row">
+          <button class="secondary-btn" type="button" id="declineJoin">Decline</button>
+          <button class="primary-btn" type="submit">Join Group</button>
+        </div>
+      </form>
+    </section>
+  `);
+
+  document.getElementById("declineJoin").addEventListener("click", renderDeclined);
+  document.getElementById("joinForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const code = document.getElementById("groupCode").value;
+    const eligible = state.groups.filter((group) => group.name.toLowerCase() === "group 4");
+    const randomPool = eligible.length ? eligible : state.groups;
+    const group =
+      code === "__random__"
+        ? randomPool[Math.floor(Math.random() * randomPool.length)]
+        : state.groups.find((item) => item.code === code);
+    if (!group) {
+      renderJoinGate(participant, "That group code was not found.");
+      return;
+    }
+    startSession(participant, group);
+  });
+}
+
+function renderDeclined() {
+  renderFrame(`
+    <section class="plain-card">
+      <h2>You left the invitation</h2>
+      <p>No study session was started.</p>
+      <button class="primary-btn" id="startAgain">Back to entry</button>
+    </section>
+  `);
+  document.getElementById("startAgain").addEventListener("click", renderOnboarding);
+}
+
+function startSession(participant, group) {
+  const state = loadState();
+  const session = {
+    id: createId("ses"),
+    participantName: participant.name,
+    participantPhone: participant.phone,
+    participantEmail: participant.email,
+    participantPhoto: participant.photo,
+    groupId: group.id,
+    groupCode: group.code,
+    groupName: group.name,
+    creator: group.creator,
+    condition: group.readReceipts ? "READ_RECEIPTS_ON" : "NO_AWARENESS_CUE",
+    readReceipts: group.readReceipts,
+    memberCount: group.memberCount,
+    bystanderCount: group.bystanderCount,
+    status: "WAITING",
+    entryTime: new Date().toISOString(),
+    helpCueShownAt: null,
+    completedAt: null,
+    responded: null,
+    latencySeconds: null,
+    timeoutDeadline: null,
+    messages: [],
+    scriptIndex: Math.floor(Math.random() * botScripts.length)
+  };
+  state.sessions.push(session);
+  saveState(state);
+  logEvent(session.id, "SESSION_STARTED", { condition: session.condition });
+  renderChat(session.id);
+}
+
+function renderChat(sessionId) {
+  clearTimers();
+  const session = loadState().sessions.find((item) => item.id === sessionId);
+  if (!session) {
+    renderOnboarding("Session could not be found.");
+    return;
+  }
+  renderFrame(`
+    <section class="messenger" style="grid-template-rows: 100%;">
+      <aside class="chat-list">
+        <div class="list-head">
+          ${avatarMarkup(session.participantName, session.participantPhoto)}
+          <div class="list-icons"><span></span><span></span><span></span></div>
+        </div>
+        <div class="search-box">Search or start new chat</div>
+        <button class="thread active">
+          ${avatarMarkup("Group 4", "", "thread-avatar")}
+          <span><strong>${escapeHtml(session.groupName)}</strong><small id="threadPreview">Group task started</small></span>
+        </button>
+        <div class="member-panel">
+          <h3>Members</h3>
+          ${memberListMarkup(session)}
+        </div>
+      </aside>
+      <section class="chat-window" style="min-height: 0;">
+        <header class="chat-head">
+          <div class="chat-title">
+            ${avatarMarkup(session.groupName, "", "thread-avatar")}
+            <div><h2>${escapeHtml(session.groupName)}</h2><p>${session.memberCount} members</p></div>
+          </div>
+          <div class="chat-actions"><button title="Search">⌕</button><button title="Menu">⋮</button></div>
+        </header>
+        <div class="messages" id="messages"></div>
+        <div class="composer-container" style="display: flex; flex-direction: column; background: var(--panel);">
+          <div id="replyPreview" class="reply-preview" style="display: none;">
+            <div class="reply-preview-content">
+              <div id="replyPreviewSender" class="reply-preview-sender"></div>
+              <div id="replyPreviewText" class="reply-preview-text"></div>
+            </div>
+            <button type="button" id="cancelReply" title="Cancel reply">✕</button>
+          </div>
+          <form class="composer" id="composer" style="width: 100%;">
+            <button type="button" title="Attach">＋</button>
+            <input id="messageInput" placeholder="Type a message" autocomplete="off">
+            <button class="send-btn" type="submit" title="Send">➤</button>
+          </form>
+        </div>
+      </section>
+    </section>
+  `, true);
+
+  document.getElementById("composer").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const input = document.getElementById("messageInput");
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    addParticipantMessage(sessionId, text);
+    cancelReply();
+  });
+
+  document.getElementById("cancelReply").addEventListener("click", cancelReply);
+  
+  document.getElementById("messages").addEventListener("click", (event) => {
+    if (event.target.classList.contains("reply-btn")) {
+      const msgId = event.target.dataset.msgId;
+      const session = loadState().sessions.find((item) => item.id === sessionId);
+      const msg = session?.messages.find(m => m.id === msgId);
+      if (msg) {
+        replyingTo = { id: msg.id, sender: msg.sender || (msg.kind === "system" ? "System" : session.groupName), text: msg.text };
+        document.getElementById("replyPreview").style.display = "flex";
+        document.getElementById("replyPreviewSender").textContent = replyingTo.sender;
+        document.getElementById("replyPreviewText").textContent = replyingTo.text;
+        document.getElementById("messageInput").focus();
+      }
+    }
+  });
+
+  function cancelReply() {
+    replyingTo = null;
+    const preview = document.getElementById("replyPreview");
+    if (preview) preview.style.display = "none";
+  }
+
+  timers.push(setInterval(() => updateReadReceipts(sessionId), 2500));
+  scheduleMessages(sessionId);
+  drawMessages(sessionId);
+}
+
+function scheduleMessages(sessionId) {
+  const session = loadState().sessions.find((item) => item.id === sessionId);
+  if (!session || session.status === "COMPLETED") return;
+  const alreadyShown = new Set(session.messages.map((message) => message.scriptKey).filter(Boolean));
+  const baseScript = botScripts[session.scriptIndex] || botScripts[0];
+  const allScript = [
+    ...baseScript.map((line, index) => ({ line, key: `pre_${index}` })),
+    { line: [HELP_OFFSET_MS, "Samir", HELP_CUE, "help"], key: "help_cue" },
+    ...postHelpScript.map((line, index) => ({ line, key: `post_${index}` }))
+  ];
+
+  allScript.forEach(({ line, key }) => {
+    if (alreadyShown.has(key)) return;
+    const [delay, sender, rawText, kind] = line;
+    timers.push(setTimeout(() => {
+      const latest = loadState().sessions.find((item) => item.id === sessionId);
+      if (!latest || latest.status === "COMPLETED") return;
+      const text = rawText.replaceAll("{{name}}", latest.participantName);
+      addMessage(sessionId, { sender, text, kind: kind || "bot", scriptKey: key });
+      if (key === "help_cue") markHelpCueShown(sessionId);
+    }, delay));
+  });
+}
+
+function addMessage(sessionId, msgObj) {
+  const state = loadState();
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session) return;
+  const newMsg = {
+    id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+    sender: msgObj.sender,
+    text: msgObj.text,
+    kind: msgObj.kind,
+    at: new Date().toISOString(),
+    scriptKey: msgObj.scriptKey,
+    replyTo: msgObj.replyTo,
+    seenCount: Math.floor(Math.random() * 4) + 1
+  };
+  session.messages.push(newMsg);
+  if (session.status === "WAITING" && msgObj.kind !== "system") session.status = "NORMAL_CONVERSATION";
+  saveState(state);
+  drawMessages(sessionId);
+}
+
+function addParticipantMessage(sessionId, text) {
+  const state = loadState();
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session || session.status === "COMPLETED") return;
+  const sentAt = new Date();
+  const msgObj = {
+    id: createId("msg"),
+    at: sentAt.toISOString(),
+    sender: session.participantName,
+    text,
+    kind: "participant"
+  };
+  if (replyingTo) {
+    msgObj.replyTo = replyingTo;
+  }
+  session.messages.push(msgObj);
+  
+  if (session.helpCueShownAt && session.responded === null) {
+    session.responded = 1;
+    session.latencySeconds = Number(((sentAt - new Date(session.helpCueShownAt)) / 1000).toFixed(1));
+    logEvent(sessionId, "RESPONDED", { latencySeconds: session.latencySeconds, text: text });
+    
+    // Evaluate if the user gave the correct admin2026 code
+    const normalizedText = text.toLowerCase().replace(/\s/g, '');
+    let botReplyText = "";
+    if (normalizedText.includes("admin2026")) {
+      botReplyText = "Oh nice, admin 2026 worked! Thanks so much.";
+    } else {
+      botReplyText = "Hmm, I tried that and it didn't work. Isn't the code admin2026?";
+    }
+    
+    const delay = calculateDelay(botReplyText);
+    timers.push(setTimeout(() => {
+      addMessage(sessionId, { sender: "Samir", text: botReplyText, kind: "bot" });
+    }, delay));
+  } else {
+    triggerDynamicBotReply(sessionId, text);
+  }
+  
+  saveState(state);
+  logEvent(sessionId, "PARTICIPANT_MESSAGE", { text });
+  drawMessages(sessionId);
+}
+
+function calculateDelay(text) {
+  let delay = 7000 + Math.random() * 4000 + (text.length * 100);
+  if (delay < 8000) delay = 8000;
+  if (delay > 15000) delay = 15000;
+  return delay;
+}
+
+function triggerDynamicBotReply(sessionId, userText) {
+  const responses = [
+    { keywords: ["help", "code", "guide"], replies: ["I think the code is just GROUP4.", "Try refreshing the page?", "Yeah, I saw it in the setup."] },
+    { keywords: ["hi", "hello", "hey", "sup"], replies: ["Hey!", "Hi there", "Hello", "Hey, what's up?"] },
+    { keywords: ["what", "where", "how", "why"], replies: ["Not sure tbh.", "Maybe check the instructions?", "I'm figuring it out too.", "Good question."] },
+    { keywords: ["yes", "yeah", "yep", "sure", "ok"], replies: ["Okay cool.", "Makes sense.", "Got it.", "Nice."] },
+    { keywords: ["no", "nope", "nah"], replies: ["Oh ok.", "Alright.", "Hmm.", "Fair enough."] },
+    { keywords: ["thanks", "thank"], replies: ["No problem!", "You got it.", "Anytime."] }
+  ];
+  
+  let chosenReplies = ["Yeah.", "I agree.", "Oh okay.", "Interesting.", "Haha yeah.", "Let's see.", "Wait, really?"];
+  
+  const textLower = userText.toLowerCase();
+  for (let rule of responses) {
+    if (rule.keywords.some(k => textLower.includes(k))) {
+      chosenReplies = rule.replies;
+      break;
+    }
+  }
+  
+  const replyText = chosenReplies[Math.floor(Math.random() * chosenReplies.length)];
+  const availableBots = bots.filter(b => b.role === "member");
+  const randomBot = availableBots[Math.floor(Math.random() * availableBots.length)];
+  
+  const delay = calculateDelay(replyText);
+  timers.push(setTimeout(() => {
+    addMessage(sessionId, { sender: randomBot.name, text: replyText, kind: "bot" });
+  }, delay));
+}
+
+function markHelpCueShown(sessionId) {
+  const state = loadState();
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session || session.helpCueShownAt) return;
+  session.status = "SCENARIO_TRIGGERED";
+  session.helpCueShownAt = new Date().toISOString();
+  session.timeoutDeadline = new Date(Date.now() + TIMEOUT_MS).toISOString();
+  saveState(state);
+  logEvent(sessionId, "HELP_CUE_SHOWN", { cue: HELP_CUE });
+  startCountdown(sessionId);
+  timers.push(setTimeout(() => completeTimeout(sessionId), TIMEOUT_MS));
+  drawMessages(sessionId);
+}
+
+function completeTimeout(sessionId) {
+  const state = loadState();
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session || session.status === "COMPLETED" || !session.helpCueShownAt) return;
+  
+  if (session.responded === null) {
+    session.responded = 0;
+    session.latencySeconds = "";
+    logEvent(sessionId, "TIMED_OUT", { timeoutSeconds: TIMEOUT_MS / 1000 });
+    saveState(state);
+  }
+}
+
+function drawMessages(sessionId) {
+  const state = loadState();
+  const session = state.sessions.find((item) => item.id === sessionId);
+  const container = document.getElementById("messages");
+  if (!session || !container) return;
+  
+  const oldScrollTop = container.scrollTop;
+  const oldScrollHeight = container.scrollHeight;
+  const isNearBottom = oldScrollHeight - oldScrollTop <= container.clientHeight + 100;
+
+  container.innerHTML = session.messages.map((message) => {
+    if (message.kind === "system") return `<div class="system-message">${escapeHtml(message.text)}</div>`;
+    const own = message.kind === "participant";
+    const help = message.kind === "help";
+    const receipt = session.readReceipts
+      ? `<span class="ticks">✓✓</span><span class="seen-text" data-msg-id="${message.id}">Seen by ${message.seenCount !== undefined ? message.seenCount : session.bystanderCount} others${own ? "" : ` and ${escapeHtml(session.participantName)}`}</span>`
+      : "";
+    const replySnippet = message.replyTo
+      ? `<div class="replied-snippet">
+           <div class="replied-snippet-sender">${escapeHtml(message.replyTo.sender)}</div>
+           <div class="replied-snippet-text">${escapeHtml(message.replyTo.text)}</div>
+         </div>`
+      : "";
+    return `
+      <article class="bubble ${own ? "own" : ""} ${help ? "help" : ""}">
+        ${replySnippet}
+        ${own ? "" : `<div class="bubble-sender" style="color:${findMemberColor(message.sender)}">${escapeHtml(message.sender)}</div>`}
+        <div class="bubble-text">${escapeHtml(message.text)}</div>
+        <div class="bubble-meta"><span>${formatClock(message.at)}</span>${receipt}<button type="button" class="reply-btn" data-msg-id="${message.id}" title="Reply">↩</button></div>
+      </article>
+    `;
+  }).join("");
+  
+  if (isNearBottom || oldScrollHeight === 0) {
+    container.scrollTop = container.scrollHeight;
+  } else {
+    container.scrollTop = oldScrollTop;
+  }
+  
+  const status = document.getElementById("sessionStatus");
+  if (status) status.textContent = statusLabel(session);
+  const preview = document.getElementById("threadPreview");
+  if (preview) {
+    const last = session.messages.at(-1);
+    preview.textContent = last ? last.text.slice(0, 42) : "Group task started";
+  }
+  if (session.helpCueShownAt && session.status !== "COMPLETED") startCountdown(sessionId);
+}
+
+function updateReadReceipts(sessionId) {
+  const state = loadState();
+  const session = state.sessions.find(s => s.id === sessionId);
+  if (!session || !session.readReceipts) return;
+  
+  let changed = false;
+  session.messages.forEach(msg => {
+    if (msg.seenCount === undefined) {
+      msg.seenCount = Math.floor(Math.random() * 4) + 1;
+      changed = true;
+    }
+  });
+
+  session.messages.forEach(msg => {
+    if (msg.seenCount < session.bystanderCount) {
+      if (Math.random() < 0.5) { 
+        msg.seenCount += Math.floor(Math.random() * 2) + 1;
+        if (msg.seenCount > session.bystanderCount) msg.seenCount = session.bystanderCount;
+        changed = true;
+      }
+    }
+  });
+  
+  let maxSeen = 0;
+  for (let i = session.messages.length - 1; i >= 0; i--) {
+    let msg = session.messages[i];
+    if (msg.seenCount > maxSeen) {
+      maxSeen = msg.seenCount;
+    } else if (msg.seenCount < maxSeen) {
+      msg.seenCount = maxSeen;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    saveState(state);
+    session.messages.forEach(msg => {
+      const span = document.querySelector(`span.seen-text[data-msg-id="${msg.id}"]`);
+      if (span) {
+        const own = msg.kind === "participant";
+        span.textContent = `Seen by ${msg.seenCount} others${own ? "" : ` and ${escapeHtml(session.participantName)}`}`;
+      }
+    });
+  }
+}
+
+function renderDebrief(sessionId) {
+  clearTimers();
+  const session = loadState().sessions.find((item) => item.id === sessionId);
+  const result = session?.responded
+    ? `Your reply was recorded ${session.latencySeconds} seconds after the target message.`
+    : "No reply was recorded within the observation window.";
+  renderFrame(`
+    <section class="plain-card">
+      <h2>Debrief</h2>
+      <p>This was a simulated group chat for a digital bystander effect study. The other visible members were scripted study accounts, not live participants.</p>
+      <p>${result}</p>
+      <p class="fine-print">Before real data collection, replace this text with your faculty or ethics-board-approved debrief, investigator contact, and data withdrawal instructions.</p>
+      <div class="action-row"><button class="primary-btn" id="newSession">New Session</button><button class="secondary-btn" id="openAdmin">Open Admin</button></div>
+    </section>
+  `);
+  document.getElementById("newSession").addEventListener("click", renderOnboarding);
+  document.getElementById("openAdmin").addEventListener("click", renderAdminLogin);
+}
+
+function renderAdminLogin(error = "") {
+  clearTimers();
+  renderFrame(`
+    <form class="entry-card admin-login" id="adminForm">
+      <h2>Administrator Access</h2>
+      <label><span>Name</span><input id="adminName" required></label>
+      <label><span>Phone</span><input id="adminPhone" required></label>
+      <label><span>Secret passcode</span><input id="adminPasscode" type="password" required></label>
+      ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+      <button class="primary-btn" type="submit">Unlock Dashboard</button>
+    </form>
+  `);
+  document.getElementById("adminForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = document.getElementById("adminName").value.trim();
+    const phone = document.getElementById("adminPhone").value.trim();
+    const passcode = document.getElementById("adminPasscode").value;
+    if (!name || !phone || passcode !== ADMIN_PASSCODE) {
+      renderAdminLogin("Admin details are incomplete or the passcode is wrong.");
+      return;
+    }
+    sessionStorage.setItem("study_admin", JSON.stringify({ name, phone }));
+    renderAdminDashboard();
+  });
+}
+
+function renderAdminDashboard() {
+  const state = ensureDefaultGroups(loadState());
+  const groupRows = state.groups.map((group) => {
+    const sessions = state.sessions.filter((session) => session.groupId === group.id);
+    return `
+      <tr>
+        <td><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.code)}</small></td>
+        <td>${escapeHtml(group.creator)}</td>
+        <td>${group.bystanderCount}</td>
+        <td>${group.readReceipts ? '<span class="badge ok">Read receipts</span>' : '<span class="badge warn">No cue</span>'}</td>
+        <td>${sessions.length}</td>
+      </tr>
+    `;
+  }).join("");
+  const sessionRows = state.sessions.map((session) => {
+    const statusClass = session.status === "COMPLETED" ? (session.responded ? "ok" : "danger") : "warn";
+    const latency = session.responded === 1 ? `${session.latencySeconds}s` : session.responded === 0 ? "Timed out" : "--";
+    return `
+      <tr>
+        <td><strong>${escapeHtml(session.participantName)}</strong><small>${escapeHtml(session.participantEmail || "")}</small></td>
+        <td>${escapeHtml(session.participantPhone || "")}</td>
+        <td>${escapeHtml(session.groupCode)}</td>
+        <td>${escapeHtml(session.condition)}</td>
+        <td><span class="badge ${statusClass}">${escapeHtml(statusLabel(session))}</span></td>
+        <td>${session.responded === null ? "--" : session.responded}</td>
+        <td>${latency}</td>
+      </tr>
+    `;
+  }).join("");
+  const transcriptCards = state.sessions.map(transcriptMarkup).join("");
+
+  renderFrame(`
+    <section class="admin-grid">
+      <form class="entry-card" id="groupForm">
+        <h2>Create Group Code</h2>
+        <label><span>Group name</span><input id="groupName" value="Group 4" required></label>
+        <label><span>Creator name</span><input id="creatorName" value="Dr. Maya" required></label>
+        <label><span>Permanent group code</span><input id="newCode" value="GROUP4-${Math.random().toString(36).slice(2, 6).toUpperCase()}" required></label>
+        <label><span>Bot bystanders</span><input id="bystanderCount" type="number" min="1" max="30" value="10" required></label>
+        <label><span>Visible member count</span><input id="memberCount" type="number" min="2" max="40" value="12" required></label>
+        <label><span>Awareness cue condition</span><select id="readReceipts"><option value="true">Read receipts visible</option><option value="false">No read receipts</option></select></label>
+        <button class="primary-btn" type="submit">Create</button>
+      </form>
+      <div class="admin-main">
+        <div class="admin-toolbar"><button class="primary-btn" id="exportCsv">Export CSV</button><button class="secondary-btn" id="refreshAdmin">Refresh</button><button class="danger-btn" id="clearData">Clear Local Data</button></div>
+        <section class="table-card"><h2>Groups</h2><div class="table-wrap"><table><thead><tr><th>Group</th><th>Creator</th><th>Bots</th><th>Condition</th><th>Sessions</th></tr></thead><tbody id="groupTableBody">${groupRows || '<tr><td colspan="5" class="empty">No groups yet.</td></tr>'}</tbody></table></div></section>
+        <section class="table-card"><h2>Participant Sessions <small id="fbSyncStatus" style="font-weight:normal;color:var(--green-600);">(Syncing from Firebase...)</small></h2><div class="table-wrap"><table><thead><tr><th>Participant</th><th>Phone</th><th>Group</th><th>Condition</th><th>Status</th><th>Binary</th><th>Latency</th></tr></thead><tbody id="sessionTableBody">${sessionRows || '<tr><td colspan="7" class="empty">No participant data yet.</td></tr>'}</tbody></table></div></section>
+        <section class="table-card"><h2>Chat Transcripts</h2><div class="transcript-list" id="transcriptListBody">${transcriptCards || '<div class="empty">No chats have reached the admin account yet.</div>'}</div></section>
+      </div>
+    </section>
+  `, true);
+
+  if (typeof firebase !== 'undefined') {
+    try {
+      if (typeof firebase.database === 'function') {
+        firebase.database().ref('sessions').on('value', (snapshot) => {
+          const data = snapshot.val() || {};
+          const allSessions = Object.values(data);
+          allSessions.sort((a, b) => b.at ? b.at.localeCompare(a.at) : -1);
+          
+          const sBody = document.getElementById("sessionTableBody");
+          const tBody = document.getElementById("transcriptListBody");
+          const sStatus = document.getElementById("fbSyncStatus");
+          
+          if (sBody) {
+            const rows = allSessions.map((session) => {
+              const statusClass = session.status === "COMPLETED" ? (session.responded ? "ok" : "danger") : "warn";
+              const latency = session.responded === 1 ? `${session.latencySeconds}s` : session.responded === 0 ? "Timed out" : "--";
+              return `
+                <tr>
+                  <td><strong>${escapeHtml(session.participantName)}</strong><small>${escapeHtml(session.participantEmail || "")}</small></td>
+                  <td>${escapeHtml(session.participantPhone || "")}</td>
+                  <td>${escapeHtml(session.groupCode)}</td>
+                  <td>${escapeHtml(session.condition)}</td>
+                  <td><span class="badge ${statusClass}">${escapeHtml(statusLabel(session))}</span></td>
+                  <td>${session.responded === null ? "--" : session.responded}</td>
+                  <td>${latency}</td>
+                </tr>
+              `;
+            }).join("");
+            sBody.innerHTML = rows || '<tr><td colspan="7" class="empty">No participant data yet.</td></tr>';
+          }
+          
+          if (tBody) {
+            const cards = allSessions.map(transcriptMarkup).join("");
+            tBody.innerHTML = cards || '<div class="empty">No chats have reached the admin account yet.</div>';
+          }
+          
+          if (sStatus) sStatus.textContent = "(Live Firebase Sync Active)";
+        });
+
+        firebase.database().ref('groups').on('value', (snapshot) => {
+          const data = snapshot.val() || {};
+          const allGroups = Object.values(data);
+          const gBody = document.getElementById("groupTableBody");
+          if (gBody) {
+            const rows = allGroups.map((group) => {
+              return `
+                <tr>
+                  <td><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.code)}</small></td>
+                  <td>${escapeHtml(group.creator)}</td>
+                  <td>${group.bystanderCount}</td>
+                  <td>${group.readReceipts ? '<span class="badge ok">Read receipts</span>' : '<span class="badge warn">No cue</span>'}</td>
+                  <td>Synced</td>
+                </tr>
+              `;
+            }).join("");
+            gBody.innerHTML = rows || '<tr><td colspan="5" class="empty">No groups yet.</td></tr>';
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("Firebase Admin dashboard sync failed:", e);
+    }
+  }
+
+  document.getElementById("groupForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const updated = loadState();
+    const group = makeGroup(
+      document.getElementById("newCode").value.trim().toUpperCase(),
+      document.getElementById("readReceipts").value === "true",
+      Number(document.getElementById("bystanderCount").value),
+      Number(document.getElementById("memberCount").value)
+    );
+    group.name = document.getElementById("groupName").value.trim();
+    group.creator = document.getElementById("creatorName").value.trim();
+    if (!group.code || updated.groups.some((item) => item.code === group.code)) return;
+    updated.groups.push(group);
+    saveState(updated);
+    renderAdminDashboard();
+  });
+  document.getElementById("exportCsv").addEventListener("click", exportCsv);
+  document.getElementById("refreshAdmin").addEventListener("click", renderAdminDashboard);
+  document.getElementById("clearData").addEventListener("click", () => {
+    localStorage.removeItem(STORAGE_KEY);
+    renderAdminDashboard();
+  });
+}
+
+function transcriptMarkup(session) {
+  const messages = session.messages.length
+    ? session.messages.map((message) => `
+      <div class="admin-message ${message.kind === "participant" ? "from-user" : ""}">
+        <span>${formatClock(message.at)} · ${escapeHtml(message.sender)}</span>
+        <p>${escapeHtml(message.text)}</p>
+      </div>
+    `).join("")
+    : '<div class="empty">No messages yet.</div>';
+  return `
+    <article class="transcript-card">
+      <header>
+        <div>
+          <strong>${escapeHtml(session.participantName)}</strong>
+          <small>${escapeHtml(session.groupCode)} · ${escapeHtml(session.condition)}</small>
+        </div>
+        <span class="badge ${session.responded === 1 ? "ok" : session.responded === 0 ? "danger" : "warn"}">${escapeHtml(statusLabel(session))}</span>
+      </header>
+      <div class="admin-chat-log">${messages}</div>
+    </article>
+  `;
+}
+
+function memberListMarkup(session) {
+  const participant = { name: session.participantName, role: "you", photo: session.participantPhoto, color: "#128c7e" };
+  return [participant, ...bots].slice(0, session.memberCount).map((member) => `
+    <div class="member-row">
+      ${avatarMarkup(member.name, member.photo || "", "small-avatar", member.color)}
+      <span><strong>${escapeHtml(member.name)}</strong><small>${member.role === "creator" ? "Group creator" : member.role === "you" ? "You" : "Member"}</small></span>
+    </div>
+  `).join("");
+}
+
+function avatarMarkup(name, photo = "", className = "avatar", color = "") {
+  const initials = String(name).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "G";
+  if (photo) return `<span class="${className} avatar-img"><img src="${escapeHtml(photo)}" alt=""></span>`;
+  const style = color ? ` style="background:${escapeHtml(color)}"` : "";
+  return `<span class="${className}"${style}>${escapeHtml(initials)}</span>`;
+}
+
+function findMemberColor(name) {
+  return bots.find((member) => member.name === name)?.color || "#128c7e";
+}
+
+function startCountdown(sessionId) {
+  if (countdownTimer) clearInterval(countdownTimer);
+  const timer = document.getElementById("timer");
+  if (!timer) return;
+  countdownTimer = setInterval(() => {
+    const session = loadState().sessions.find((item) => item.id === sessionId);
+    if (!session || !session.timeoutDeadline || session.status === "COMPLETED") {
+      clearInterval(countdownTimer);
+      return;
+    }
+    const remaining = Math.max(0, new Date(session.timeoutDeadline) - new Date());
+    const minutes = Math.floor(remaining / 60000);
+    const seconds = Math.floor((remaining % 60000) / 1000);
+    timer.textContent = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }, 250);
+}
+
+function logEvent(sessionId, type, details = {}) {
+  const state = loadState();
+  state.events.push({ id: createId("evt"), sessionId, type, details, timestamp: new Date().toISOString() });
+  saveState(state);
+}
+
+function exportCsv() {
+  const state = loadState();
+  const header = ["participant_name", "phone", "email", "group_code", "condition", "responded_binary", "latency_seconds", "entry_time", "help_cue_shown_at", "completed_at"];
+  const rows = state.sessions.map((session) => [
+    session.participantName,
+    session.participantPhone,
+    session.participantEmail,
+    session.groupCode,
+    session.condition,
+    session.responded,
+    session.latencySeconds,
+    session.entryTime,
+    session.helpCueShownAt,
+    session.completedAt
+  ].map(csvCell));
+  const csv = [header, ...rows].map((row) => row.join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `digital-bystander-export-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function statusLabel(session) {
+  if (session.responded === 1) return `Responded in ${session.latencySeconds}s`;
+  if (session.responded === 0) return "Did not respond in time";
+  return session.status;
+}
+
+function formatClock(value) {
+  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function csvCell(value) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+renderOnboarding();
