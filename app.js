@@ -137,7 +137,6 @@ function renderFrame(content, wide = false) {
           <div class="site-mark">G4</div>
           <div>
             <h1>Group Chat Study</h1>
-            <p>Digital bystander effect research prototype</p>
           </div>
         </div>
         <nav>
