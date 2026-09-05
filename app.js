@@ -102,11 +102,11 @@ function createId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-function makeGroup(code, readReceipts, bystanderCount = 10, memberCount = 12) {
+function makeGroup(code, name, readReceipts, bystanderCount = 10, memberCount = 12) {
   return {
     id: createId("grp"),
     code,
-    name: "Group 4",
+    name,
     creator: "Dr. Maya",
     memberCount,
     bystanderCount,
@@ -117,7 +117,7 @@ function makeGroup(code, readReceipts, bystanderCount = 10, memberCount = 12) {
 
 function ensureDefaultGroups(state) {
   if (state.groups.length) return state;
-  state.groups = [makeGroup("GROUP4-CUE", true), makeGroup("GROUP4-NOCUE", false)];
+  state.groups = [makeGroup("GROUP4", "Group 4", true), makeGroup("GROUP5", "Group 5", false)];
   saveState(state);
   return state;
 }
@@ -215,20 +215,24 @@ function readPhoto(file) {
 function renderJoinGate(participant, error = "") {
   const state = ensureDefaultGroups(loadState());
   const groupOptions = state.groups
-    .map((group) => `<option value="${escapeHtml(group.code)}">${escapeHtml(group.code)}</option>`)
+    .map((group) => `<option value="${escapeHtml(group.code)}">${escapeHtml(group.name)}</option>`)
     .join("");
 
   renderFrame(`
     <section class="join-card">
       <div class="group-invite">
-        ${avatarMarkup("Group 4", "", "group-avatar")}
-        <h2>Group 4</h2>
-        <p>${state.groups[0]?.memberCount || 12} members</p>
+        ${avatarMarkup("Group", "", "group-avatar")}
+        <h2>Group Chat Task</h2>
+        <p>12 members</p>
         <p class="invite-text">You have been invited to join this online group chat task.</p>
       </div>
       <form class="join-form" id="joinForm">
-        <!-- Randomly assigned in backend -->
-        <input type="hidden" id="groupCode" value="__random__">
+        <label>
+          <span>Select Group</span>
+          <select id="groupCode" required>
+            ${groupOptions}
+          </select>
+        </label>
         ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
         <div class="action-row">
           <button class="secondary-btn" type="button" id="declineJoin">Decline</button>
@@ -242,12 +246,7 @@ function renderJoinGate(participant, error = "") {
   document.getElementById("joinForm").addEventListener("submit", (event) => {
     event.preventDefault();
     const code = document.getElementById("groupCode").value;
-    const eligible = state.groups.filter((group) => group.name.toLowerCase() === "group 4");
-    const randomPool = eligible.length ? eligible : state.groups;
-    const group =
-      code === "__random__"
-        ? randomPool[Math.floor(Math.random() * randomPool.length)]
-        : state.groups.find((item) => item.code === code);
+    const group = state.groups.find((item) => item.code === code);
     if (!group) {
       renderJoinGate(participant, "That group code was not found.");
       return;
@@ -824,14 +823,15 @@ function renderAdminDashboard() {
   document.getElementById("groupForm").addEventListener("submit", (event) => {
     event.preventDefault();
     const updated = loadState();
+    const groupName = document.getElementById("groupName").value.trim() || "Group 4";
     const group = makeGroup(
       document.getElementById("newCode").value.trim().toUpperCase(),
+      groupName,
       document.getElementById("readReceipts").value === "true",
       Number(document.getElementById("bystanderCount").value),
       Number(document.getElementById("memberCount").value)
     );
-    group.name = document.getElementById("groupName").value.trim();
-    group.creator = document.getElementById("creatorName").value.trim();
+    group.creator = document.getElementById("creatorName").value.trim() || "Dr. Maya";
     if (!group.code || updated.groups.some((item) => item.code === group.code)) return;
     updated.groups.push(group);
     saveState(updated);
