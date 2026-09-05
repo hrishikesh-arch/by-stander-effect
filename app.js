@@ -748,7 +748,7 @@ function renderAdminDashboard() {
         <button class="primary-btn" type="submit">Create</button>
       </form>
       <div class="admin-main">
-        <div class="admin-toolbar"><button class="primary-btn" id="exportCsv">Export CSV</button><button class="secondary-btn" id="refreshAdmin">Refresh</button><button class="danger-btn" id="clearData">Clear Local Data</button></div>
+        <div class="admin-toolbar"><button class="primary-btn" id="exportCsv">Export CSV</button><button class="secondary-btn" id="refreshAdmin">Refresh</button><button class="danger-btn" id="clearData">Wipe All Data</button></div>
         <section class="table-card"><h2>Groups</h2><div class="table-wrap"><table><thead><tr><th>Group</th><th>Creator</th><th>Bots</th><th>Condition</th><th>Sessions</th></tr></thead><tbody id="groupTableBody">${groupRows || '<tr><td colspan="5" class="empty">No groups yet.</td></tr>'}</tbody></table></div></section>
         <section class="table-card"><h2>Participant Sessions <small id="fbSyncStatus" style="font-weight:normal;color:var(--green-600);">(Syncing from Firebase...)</small></h2><div class="table-wrap"><table><thead><tr><th>Participant</th><th>Phone</th><th>Group</th><th>Condition</th><th>Status</th><th>Binary</th><th>Latency</th></tr></thead><tbody id="sessionTableBody">${sessionRows || '<tr><td colspan="7" class="empty">No participant data yet.</td></tr>'}</tbody></table></div></section>
         <section class="table-card"><h2>Chat Transcripts</h2><div class="transcript-list" id="transcriptListBody">${transcriptCards || '<div class="empty">No chats have reached the admin account yet.</div>'}</div></section>
@@ -840,8 +840,18 @@ function renderAdminDashboard() {
   document.getElementById("exportCsv").addEventListener("click", exportCsv);
   document.getElementById("refreshAdmin").addEventListener("click", renderAdminDashboard);
   document.getElementById("clearData").addEventListener("click", () => {
-    localStorage.removeItem(STORAGE_KEY);
-    renderAdminDashboard();
+    if (confirm("Are you sure you want to wipe ALL data including Firebase? This cannot be undone.")) {
+      localStorage.removeItem(STORAGE_KEY);
+      if (typeof firebase !== 'undefined' && typeof firebase.database === 'function') {
+        firebase.database().ref().remove().then(() => {
+          window.location.reload();
+        }).catch(() => {
+          window.location.reload();
+        });
+      } else {
+        window.location.reload();
+      }
+    }
   });
 }
 
