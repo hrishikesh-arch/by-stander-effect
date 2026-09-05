@@ -213,7 +213,17 @@ function readPhoto(file) {
 
 function renderJoinGate(participant, error = "") {
   const state = ensureDefaultGroups(loadState());
-  const groupOptions = state.groups
+  const uniqueGroups = [];
+  const seenNames = new Set();
+  for (const group of state.groups) {
+    if (!seenNames.has(group.name)) {
+      seenNames.add(group.name);
+      uniqueGroups.push(group);
+    }
+  }
+
+  const groupOptions = uniqueGroups
+    .sort((a, b) => a.name.localeCompare(b.name))
     .map((group) => `<option value="${escapeHtml(group.code)}">${escapeHtml(group.name)}</option>`)
     .join("");
 
