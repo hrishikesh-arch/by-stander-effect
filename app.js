@@ -62,38 +62,15 @@ const bots = [
 
 const botScripts = [
   [
-    [2500, "Dr. Maya", "Hey all."],
-    [6500, "Aarav", "hi"],
-    [11000, "Nisha", "I joined"],
-    [17000, "Kabir", "same here"],
-    [23500, "Meera", "wait what page are we on?"],
-    [31000, "Dev", "the guide page"],
-    [38500, "Ananya", "{{name}}, can you see it?"]
-  ],
-  [
     [2500, "Dr. Maya", "Everyone in?"],
     [7500, "Rohan", "yes"],
     [13000, "Ishita", "yep"],
-    [20500, "Arjun", "mine loaded now"],
-    [28500, "Tara", "where is the setup thing?"],
-    [36500, "Aarav", "{{name}}, did yours load?"]
-  ],
-  [
-    [3000, "Dr. Maya", "Okay let's start."],
-    [8500, "Meera", "one sec"],
-    [14500, "Dev", "ready"],
-    [21500, "Nisha", "back"],
-    [30000, "Kabir", "there was a code right?"],
-    [38000, "Ishita", "{{name}}, are you here?"]
+    [20500, "Tara", "where is the set up thing?"],
+    [28500, "Dev", "it's on the main page link"]
   ]
 ];
 
-const postHelpScript = [
-  [62000, "Rohan", "checking"],
-  [82000, "Tara", "maybe top page?"],
-  [109000, "Arjun", "not sure"],
-  [139000, "Nisha", "anyone?"]
-];
+const postHelpScript = [];
 
 function loadState() {
   const fallback = { groups: [], sessions: [], events: [] };
@@ -250,13 +227,8 @@ function renderJoinGate(participant, error = "") {
         <p class="invite-text">You have been invited to join this online group chat task.</p>
       </div>
       <form class="join-form" id="joinForm">
-        <label>
-          <span>Group code from creator</span>
-          <select id="groupCode">
-            <option value="__random__">Use assigned Group 4 code</option>
-            ${groupOptions}
-          </select>
-        </label>
+        <!-- Randomly assigned in backend -->
+        <input type="hidden" id="groupCode" value="__random__">
         ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
         <div class="action-row">
           <button class="secondary-btn" type="button" id="declineJoin">Decline</button>
@@ -297,6 +269,17 @@ function renderDeclined() {
 
 function startSession(participant, group) {
   const state = loadState();
+  const conditionMessage = group.readReceipts 
+    ? "Group task started. Read receipts are ON, that means everyone can see who all have read the messages."
+    : "Group task started. Read receipts are OFF, that means the reading status remains anonymous.";
+
+  const now = Date.now();
+  const messages = [
+    { id: createId("msg"), at: new Date(now - 300000).toISOString(), sender: "Dr. Maya", text: "Hello everyone", kind: "bot", seenCount: group.bystanderCount },
+    { id: createId("msg"), at: new Date(now - 240000).toISOString(), sender: "Dr. Maya", text: "Good morning", kind: "bot", seenCount: group.bystanderCount },
+    { id: createId("msg"), at: new Date(now - 1000).toISOString(), text: conditionMessage, kind: "system" }
+  ];
+
   const session = {
     id: createId("ses"),
     participantName: participant.name,
@@ -318,8 +301,8 @@ function startSession(participant, group) {
     responded: null,
     latencySeconds: null,
     timeoutDeadline: null,
-    messages: [],
-    scriptIndex: Math.floor(Math.random() * botScripts.length)
+    messages: messages,
+    scriptIndex: 0
   };
   state.sessions.push(session);
   saveState(state);
@@ -494,6 +477,17 @@ function addParticipantMessage(sessionId, text) {
     const delay = calculateDelay(botReplyText);
     timers.push(setTimeout(() => {
       addMessage(sessionId, { sender: "Samir", text: botReplyText, kind: "bot" });
+      
+      timers.push(setTimeout(() => {
+        const endState = loadState();
+        const endSession = endState.sessions.find((item) => item.id === sessionId);
+        if (endSession && endSession.status !== "COMPLETED") {
+          endSession.status = "COMPLETED";
+          endSession.completedAt = new Date().toISOString();
+          saveState(endState);
+          renderDebrief(sessionId);
+        }
+      }, 5000));
     }, delay));
   } else {
     triggerDynamicBotReply(sessionId, text);
@@ -563,8 +557,11 @@ function completeTimeout(sessionId) {
   if (session.responded === null) {
     session.responded = 0;
     session.latencySeconds = "";
+    session.status = "COMPLETED";
+    session.completedAt = new Date().toISOString();
     logEvent(sessionId, "TIMED_OUT", { timeoutSeconds: TIMEOUT_MS / 1000 });
     saveState(state);
+    renderDebrief(sessionId);
   }
 }
 
@@ -583,7 +580,7 @@ function drawMessages(sessionId) {
     const own = message.kind === "participant";
     const help = message.kind === "help";
     const receipt = session.readReceipts
-      ? `<span class="ticks">✓✓</span><span class="seen-text" data-msg-id="${message.id}">Seen by ${message.seenCount !== undefined ? message.seenCount : session.bystanderCount} others${own ? "" : ` and ${escapeHtml(session.participantName)}`}</span>`
+      ? `<span class="ticks">✓✓</span><span class="seen-text" data-msg-id="${message.id}">Seen by ${message.seenCount !== undefined ? message.seenCount : session.bystanderCount} others</span>`
       : "";
     const replySnippet = message.replyTo
       ? `<div class="replied-snippet">

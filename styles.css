@@ -492,7 +492,7 @@ td small {
 }
 
 .bubble.help {
-  outline: 2px solid rgba(245, 158, 11, 0.55);
+  /* Removed outline as requested */
 }
 
 .bubble-sender {
