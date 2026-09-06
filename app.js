@@ -2,7 +2,7 @@ const STORAGE_KEY = "digital_bystander_experiment_v2";
 const ADMIN_PASSCODE = "ADMIN2026";
 const HELP_OFFSET_MS = 45000;
 const TIMEOUT_MS = 180000;
-const HELP_CUE = "Hey guys, real quick-does anyone remember that guest code from the setup guide? My phone just disconnected.";
+const HELP_CUE = "Sorry, I missed that part of the instructions — how long did they say we have for this session?";
 
 const app = document.getElementById("app");
 
@@ -473,13 +473,13 @@ function addParticipantMessage(sessionId, text) {
     session.latencySeconds = Number(((sentAt - new Date(session.helpCueShownAt)) / 1000).toFixed(1));
     logEvent(sessionId, "RESPONDED", { latencySeconds: session.latencySeconds, text: text });
     
-    // Evaluate if the user gave the correct admin2026 code
+    // Evaluate if the user gave the correct answer (5)
     const normalizedText = text.toLowerCase().replace(/\s/g, '');
     let botReplyText = "";
-    if (normalizedText.includes("admin2026")) {
-      botReplyText = "Oh nice, admin 2026 worked! Thanks so much.";
+    if (normalizedText.includes("5") || normalizedText.includes("five")) {
+      botReplyText = "Oh right, 5 minutes! Thanks so much.";
     } else {
-      botReplyText = "Hmm, I tried that and it didn't work. Isn't the code admin2026?";
+      botReplyText = "Hmm, are you sure? I could have sworn they said 5 minutes.";
     }
     
     const delay = calculateDelay(botReplyText);

@@ -526,8 +526,8 @@ td small {
   max-width: 82%;
   padding: 7px 11px;
   border-radius: 8px;
-  color: #54656f;
-  background: #ffeecd;
+  color: #fff;
+  background: #ef4444; /* Red as requested */
   box-shadow: 0 1px 1px rgba(17, 27, 33, 0.12);
   font-size: 0.78rem;
   text-align: center;
